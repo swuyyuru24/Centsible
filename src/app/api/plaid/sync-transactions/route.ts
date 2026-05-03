@@ -1,0 +1,156 @@
+import { NextResponse } from "next/server";
+import { plaidClient } from "@/lib/plaid/client";
+import { getAuthenticatedUser } from "@/lib/supabase/api";
+import { decrypt } from "@/lib/crypto";
+import { mapPlaidCategory } from "@/lib/plaid/categories";
+
+export async function POST(request: Request) {
+  const { user, supabase, error } = await getAuthenticatedUser();
+  if (!user) return NextResponse.json({ error }, { status: 401 });
+
+  const { plaid_item_id } = await request.json();
+
+  // Get the plaid item
+  const { data: plaidItem } = await supabase
+    .from("plaid_items")
+    .select("id, plaid_access_token, transaction_cursor")
+    .eq("id", plaid_item_id)
+    .eq("user_id", user.id)
+    .single();
+
+  if (!plaidItem) {
+    return NextResponse.json({ error: "Item not found" }, { status: 404 });
+  }
+
+  const accessToken = decrypt(plaidItem.plaid_access_token);
+
+  // Get category map (name → id)
+  const { data: categories } = await supabase
+    .from("categories")
+    .select("id, name");
+  const categoryMap: Record<string, string> = {};
+  for (const cat of categories || []) {
+    categoryMap[cat.name] = cat.id;
+  }
+
+  // Get user's category rules
+  const { data: rules } = await supabase
+    .from("category_rules")
+    .select("category_id, match_field, match_pattern, priority")
+    .eq("user_id", user.id)
+    .order("priority", { ascending: false });
+
+  let cursor = plaidItem.transaction_cursor || undefined;
+  let added = 0;
+  let modified = 0;
+  let removed = 0;
+  let hasMore = true;
+
+  try {
+    while (hasMore) {
+      const response = await plaidClient.transactionsSync({
+        access_token: accessToken,
+        cursor,
+      });
+
+      const data = response.data;
+
+      // Process added transactions
+      for (const tx of data.added) {
+        const categoryName = applyCategoryRules(tx.name, tx.merchant_name, rules) ||
+          mapPlaidCategory(
+            tx.personal_finance_category?.primary || "",
+            tx.personal_finance_category?.detailed || ""
+          );
+
+        await supabase.from("transactions").upsert(
+          {
+            user_id: user.id,
+            account_id: await getAccountId(supabase, tx.account_id),
+            plaid_transaction_id: tx.transaction_id,
+            amount_cents: Math.round(tx.amount * 100),
+            date: tx.date,
+            name: tx.name,
+            merchant_name: tx.merchant_name,
+            pending: tx.pending,
+            category_id: categoryMap[categoryName] || categoryMap["Uncategorized"] || null,
+            is_manual: false,
+          },
+          { onConflict: "plaid_transaction_id" }
+        );
+        added++;
+      }
+
+      // Process modified transactions
+      for (const tx of data.modified) {
+        await supabase
+          .from("transactions")
+          .update({
+            amount_cents: Math.round(tx.amount * 100),
+            date: tx.date,
+            name: tx.name,
+            merchant_name: tx.merchant_name,
+            pending: tx.pending,
+          })
+          .eq("plaid_transaction_id", tx.transaction_id);
+        modified++;
+      }
+
+      // Process removed transactions
+      for (const tx of data.removed) {
+        await supabase
+          .from("transactions")
+          .delete()
+          .eq("plaid_transaction_id", tx.transaction_id);
+        removed++;
+      }
+
+      cursor = data.next_cursor;
+      hasMore = data.has_more;
+    }
+
+    // Update cursor
+    await supabase
+      .from("plaid_items")
+      .update({
+        transaction_cursor: cursor,
+        last_synced_at: new Date().toISOString(),
+      })
+      .eq("id", plaidItem.id);
+
+    return NextResponse.json({ added, modified, removed });
+  } catch (err: any) {
+    return NextResponse.json(
+      { error: "Failed to sync transactions" },
+      { status: 500 }
+    );
+  }
+}
+
+async function getAccountId(
+  supabase: any,
+  plaidAccountId: string
+): Promise<string> {
+  const { data } = await supabase
+    .from("accounts")
+    .select("id")
+    .eq("plaid_account_id", plaidAccountId)
+    .single();
+  return data?.id;
+}
+
+function applyCategoryRules(
+  name: string,
+  merchantName: string | null | undefined,
+  rules: any[] | null
+): string | null {
+  if (!rules) return null;
+
+  for (const rule of rules) {
+    const field = rule.match_field === "merchant_name" ? merchantName : name;
+    if (field && field.toLowerCase().includes(rule.match_pattern.toLowerCase())) {
+      return rule.category_id;
+    }
+  }
+  return null;
+}
