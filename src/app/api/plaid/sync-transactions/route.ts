@@ -3,6 +3,7 @@ import { plaidClient } from "@/lib/plaid/client";
 import { getAuthenticatedUser } from "@/lib/supabase/api";
 import { decrypt } from "@/lib/crypto";
 import { mapPlaidCategory } from "@/lib/plaid/categories";
+import { categorizeTransactionsBatch } from "@/lib/ai/categorize";
 
 export async function POST(request: Request) {
   const { user, supabase, error } = await getAuthenticatedUser();
@@ -55,29 +56,62 @@ export async function POST(request: Request) {
 
       const data = response.data;
 
-      // Process added transactions
-      for (const tx of data.added) {
-        const categoryName = applyCategoryRules(tx.name, tx.merchant_name, rules) ||
-          mapPlaidCategory(
-            tx.personal_finance_category?.primary || "",
-            tx.personal_finance_category?.detailed || ""
-          );
+      // Process added transactions — first pass: rules + Plaid categories
+      const needsAI: { tx: typeof data.added[0]; index: number }[] = [];
+      const txToInsert: any[] = [];
 
-        await supabase.from("transactions").upsert(
-          {
-            user_id: user.id,
-            account_id: await getAccountId(supabase, tx.account_id),
-            plaid_transaction_id: tx.transaction_id,
-            amount_cents: Math.round(tx.amount * 100),
-            date: tx.date,
-            name: tx.name,
-            merchant_name: tx.merchant_name,
-            pending: tx.pending,
-            category_id: categoryMap[categoryName] || categoryMap["Uncategorized"] || null,
-            is_manual: false,
-          },
-          { onConflict: "plaid_transaction_id" }
+      for (const tx of data.added) {
+        const ruleCategory = applyCategoryRules(tx.name, tx.merchant_name, rules);
+        const plaidCategory = mapPlaidCategory(
+          tx.personal_finance_category?.primary || "",
+          tx.personal_finance_category?.detailed || ""
         );
+
+        const categoryName = ruleCategory || (plaidCategory !== "Uncategorized" ? plaidCategory : null);
+
+        const record = {
+          user_id: user.id,
+          account_id: await getAccountId(supabase, tx.account_id),
+          plaid_transaction_id: tx.transaction_id,
+          amount_cents: Math.round(tx.amount * 100),
+          date: tx.date,
+          name: tx.name,
+          merchant_name: tx.merchant_name,
+          pending: tx.pending,
+          category_id: categoryName ? (categoryMap[categoryName] || categoryMap["Uncategorized"] || null) : null,
+          is_manual: false,
+        };
+
+        txToInsert.push(record);
+        if (!categoryName) {
+          needsAI.push({ tx, index: txToInsert.length - 1 });
+        }
+      }
+
+      // Second pass: batch AI categorization for uncategorized transactions
+      if (needsAI.length > 0 && process.env.GEMINI_API_KEY) {
+        const names = needsAI.map((item) => item.tx.merchant_name || item.tx.name);
+        const aiCategories = await categorizeTransactionsBatch(names);
+
+        for (let i = 0; i < needsAI.length; i++) {
+          const name = names[i];
+          const aiCategory = aiCategories[name];
+          if (aiCategory && categoryMap[aiCategory]) {
+            txToInsert[needsAI[i].index].category_id = categoryMap[aiCategory];
+          } else {
+            txToInsert[needsAI[i].index].category_id = categoryMap["Uncategorized"] || null;
+          }
+        }
+      } else {
+        // No AI key — mark remaining as Uncategorized
+        for (const item of needsAI) {
+          txToInsert[item.index].category_id = categoryMap["Uncategorized"] || null;
+        }
+      }
+
+      // Insert all transactions
+      for (const record of txToInsert) {
+        await supabase.from("transactions").upsert(record, { onConflict: "plaid_transaction_id" });
         added++;
       }
 

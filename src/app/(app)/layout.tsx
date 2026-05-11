@@ -2,6 +2,7 @@ import { SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/s
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { NotificationBell } from "@/components/layout/notification-bell";
+import { DemoBanner } from "@/components/layout/demo-banner";
 import { Separator } from "@/components/ui/separator";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
@@ -9,6 +10,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     <SidebarProvider>
       <AppSidebar />
       <SidebarInset>
+        <DemoBanner />
         <header className="flex h-14 items-center justify-between border-b px-4 md:px-6">
           <div className="flex items-center gap-2">
             <SidebarTrigger className="-ml-2" />
