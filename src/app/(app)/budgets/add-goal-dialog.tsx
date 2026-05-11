@@ -40,7 +40,7 @@ export function AddGoalDialog() {
         .from("categories")
         .select("id, name, icon")
         .order("name");
-      return data || [];
+      return (data || []) as { id: string; name: string; icon: string }[];
     },
   });
 
@@ -52,7 +52,7 @@ export function AddGoalDialog() {
         .select("id, name, type")
         .eq("is_hidden", false)
         .order("name");
-      return data || [];
+      return (data || []) as { id: string; name: string; type: string }[];
     },
   });
 

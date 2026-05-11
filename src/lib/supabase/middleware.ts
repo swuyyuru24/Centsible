@@ -8,6 +8,18 @@ function isAuthPage(pathname: string) {
 }
 
 export async function updateSession(request: NextRequest) {
+  // In demo mode, skip all auth checks
+  if (process.env.NEXT_PUBLIC_DEMO_MODE === "true") {
+    const pathname = request.nextUrl.pathname;
+    // Redirect auth pages to dashboard
+    if (isAuthPage(pathname) && !pathname.startsWith("/mfa-verify")) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/dashboard";
+      return NextResponse.redirect(url);
+    }
+    return NextResponse.next({ request });
+  }
+
   let supabaseResponse = NextResponse.next({
     request,
   });
