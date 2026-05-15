@@ -26,7 +26,7 @@ const nextConfig: NextConfig = {
           key: "Content-Security-Policy",
           value: [
             "default-src 'self'",
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.plaid.com",
+            "script-src 'self' 'unsafe-inline' https://cdn.plaid.com",
             "style-src 'self' 'unsafe-inline'",
             "img-src 'self' data: https:",
             "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://cdn.plaid.com https://production.plaid.com https://sandbox.plaid.com https://secure.splitwise.com",

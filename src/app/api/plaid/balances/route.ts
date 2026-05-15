@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 import { plaidClient } from "@/lib/plaid/client";
 import { getAuthenticatedUser } from "@/lib/supabase/api";
+import { validateOrigin } from "@/lib/csrf";
 import { decrypt } from "@/lib/crypto";
 
-export async function POST() {
+export async function POST(request: Request) {
+  const csrfError = validateOrigin(request);
+  if (csrfError) return csrfError;
+
   const { user, supabase, error } = await getAuthenticatedUser();
   if (!user) return NextResponse.json({ error }, { status: 401 });
 

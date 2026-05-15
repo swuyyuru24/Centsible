@@ -1,11 +1,15 @@
 import { NextResponse } from "next/server";
 import { plaidClient } from "@/lib/plaid/client";
 import { getAuthenticatedUser } from "@/lib/supabase/api";
+import { validateOrigin } from "@/lib/csrf";
 import { decrypt } from "@/lib/crypto";
 import { mapPlaidCategory } from "@/lib/plaid/categories";
 import { categorizeTransactionsBatch } from "@/lib/ai/categorize";
 
 export async function POST(request: Request) {
+  const csrfError = validateOrigin(request);
+  if (csrfError) return csrfError;
+
   const { user, supabase, error } = await getAuthenticatedUser();
   if (!user) return NextResponse.json({ error }, { status: 401 });
 
@@ -109,34 +113,41 @@ export async function POST(request: Request) {
         }
       }
 
-      // Insert all transactions
-      for (const record of txToInsert) {
-        await supabase.from("transactions").upsert(record, { onConflict: "plaid_transaction_id" });
-        added++;
-      }
-
-      // Process modified transactions
-      for (const tx of data.modified) {
-        await supabase
+      // Batch insert all transactions
+      if (txToInsert.length > 0) {
+        const { error: upsertError } = await supabase
           .from("transactions")
-          .update({
-            amount_cents: Math.round(tx.amount * 100),
-            date: tx.date,
-            name: tx.name,
-            merchant_name: tx.merchant_name,
-            pending: tx.pending,
-          })
-          .eq("plaid_transaction_id", tx.transaction_id);
-        modified++;
+          .upsert(txToInsert, { onConflict: "plaid_transaction_id" });
+        if (upsertError) throw upsertError;
+        added += txToInsert.length;
       }
 
-      // Process removed transactions
-      for (const tx of data.removed) {
-        await supabase
+      // Batch update modified transactions
+      if (data.modified.length > 0) {
+        const modifiedRecords = data.modified.map((tx) => ({
+          plaid_transaction_id: tx.transaction_id,
+          amount_cents: Math.round(tx.amount * 100),
+          date: tx.date,
+          name: tx.name,
+          merchant_name: tx.merchant_name,
+          pending: tx.pending,
+        }));
+        const { error: modifyError } = await supabase
+          .from("transactions")
+          .upsert(modifiedRecords, { onConflict: "plaid_transaction_id" });
+        if (modifyError) throw modifyError;
+        modified += data.modified.length;
+      }
+
+      // Batch delete removed transactions
+      if (data.removed.length > 0) {
+        const removedIds = data.removed.map((tx) => tx.transaction_id);
+        const { error: deleteError } = await supabase
           .from("transactions")
           .delete()
-          .eq("plaid_transaction_id", tx.transaction_id);
-        removed++;
+          .in("plaid_transaction_id", removedIds);
+        if (deleteError) throw deleteError;
+        removed += data.removed.length;
       }
 
       cursor = data.next_cursor;
