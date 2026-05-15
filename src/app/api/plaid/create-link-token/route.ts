@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 import { plaidClient } from "@/lib/plaid/client";
 import { getAuthenticatedUser } from "@/lib/supabase/api";
+import { validateOrigin } from "@/lib/csrf";
 import { CountryCode, Products } from "plaid";
 
-export async function POST() {
+export async function POST(request: Request) {
+  const csrfError = validateOrigin(request);
+  if (csrfError) return csrfError;
+
   const { user, error } = await getAuthenticatedUser();
   if (!user) return NextResponse.json({ error }, { status: 401 });
 
@@ -18,10 +22,9 @@ export async function POST() {
 
     return NextResponse.json({ link_token: response.data.link_token });
   } catch (err: any) {
-    const plaidError = err?.response?.data || err?.message || "Unknown error";
-    console.error("Plaid create-link-token error:", plaidError);
+    console.error("Plaid create-link-token error:", err?.response?.data || err?.message);
     return NextResponse.json(
-      { error: "Failed to create link token", details: plaidError },
+      { error: "Failed to create link token" },
       { status: 500 }
     );
   }

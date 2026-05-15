@@ -14,7 +14,13 @@
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3333/login)",
       "Bash(kill %1)",
       "Bash(vercel whoami:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(npm audit:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx -p typescript tsc --noEmit)",
+      "Bash(./node_modules/.bin/tsc --noEmit)",
+      "Bash(ls node_modules/.bin/tsc*)",
+      "Bash(npm ls:*)"
     ]
   }
 }

@@ -1,6 +1,10 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+function getGenAI() {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) throw new Error("GEMINI_API_KEY is not set");
+  return new GoogleGenerativeAI(key);
+}
 
 const SYSTEM_PROMPT = `You are a transaction categorizer for a personal finance app. Given a transaction name (merchant/description), return the single best matching category from this exact list:
 
@@ -41,7 +45,7 @@ Rules:
  */
 export async function categorizeTransaction(transactionName: string): Promise<string> {
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+    const model = getGenAI().getGenerativeModel({ model: "gemini-2.0-flash" });
 
     const result = await model.generateContent({
       contents: [
@@ -75,7 +79,7 @@ export async function categorizeTransactionsBatch(
   if (transactionNames.length === 0) return {};
 
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+    const model = getGenAI().getGenerativeModel({ model: "gemini-2.0-flash" });
 
     const prompt = `${SYSTEM_PROMPT}
 
